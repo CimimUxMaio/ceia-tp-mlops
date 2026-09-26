@@ -15,13 +15,14 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-# Modified by Facundo Lucianna on July 12, 2025, based on the 
+# Modified by Facundo Lucianna on July 12, 2025, based on the
 # original file from the ASF.
 
 # WARNING: This configuration is for local development. Do not use it in a production deployment.
 x-airflow-common: &airflow-common
   build: './dockerfiles/airflow'
   image: ${AIRFLOW_IMAGE_NAME:-extending_airflow:latest}
+  pull_policy: build
   profiles:
     - airflow
     - all
@@ -69,6 +70,7 @@ services:
     restart: always
     build: './dockerfiles/postgres'
     image: postgres_system
+    pull_policy: build
     container_name: postgres
     profiles:
       - airflow
@@ -109,7 +111,7 @@ services:
 
   s3:
     restart: always
-    image: quay.io/minio/minio:latest
+    image: quay.io/minio:latest
     container_name: minio
     profiles:
       - mlflow
@@ -157,6 +159,7 @@ services:
     restart: always
     build: "./dockerfiles/mlflow"
     image: mlflow
+    pull_policy: build
     container_name: mlflow
     profiles:
       - mlflow
@@ -175,7 +178,7 @@ services:
       - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minio123}
       - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
     command: >
-      mlflow server 
+      mlflow server
       --backend-store-uri postgresql://${PG_USER:-airflow}:${PG_PASSWORD:-airflow}@postgres:5432/mlflow_db
       --host 0.0.0.0
       --default-artifact-root s3://${MLFLOW_BUCKET_NAME:-mlflow}/
@@ -190,6 +193,7 @@ services:
     restart: always
     build: "./dockerfiles/fastapi"
     image: backend_fastapi
+    pull_policy: build
     container_name: fastapi
     profiles:
       - all
@@ -209,7 +213,7 @@ services:
       - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
       - AWS_ENDPOINT_URL_S3=http://s3:9000
     command: >
-      uvicorn app:app 
+      uvicorn app:app
       --host 0.0.0.0
       --port 8800
     healthcheck:
@@ -266,7 +270,7 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
-  
+
   airflow-worker:
     <<: *airflow-common
     command: celery worker -c 2
@@ -290,7 +294,7 @@ services:
       airflow-apiserver:
         condition: service_healthy
       airflow-init:
-        condition: service_completed_successfully       
+        condition: service_completed_successfully
 
   airflow-triggerer:
     <<: *airflow-common
