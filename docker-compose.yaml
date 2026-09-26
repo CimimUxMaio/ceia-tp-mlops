@@ -111,7 +111,7 @@ services:
 
   s3:
     restart: always
-    image: quay.io/minio:latest
+    image: pgsty/minio:latest
     container_name: minio
     profiles:
       - mlflow
@@ -136,14 +136,15 @@ services:
       retries: 3
 
   create_s3_buckets:
-    image: quay.io/minio/mc:latest
+    image: pgsty/mc:latest
     container_name: minio_create_bucket
     profiles:
       - mlflow
       - airflow
       - all
     depends_on:
-      - s3
+      s3:
+        condition: service_healthy
     networks:
       - backend
     entrypoint: >
