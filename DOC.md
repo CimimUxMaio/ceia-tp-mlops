@@ -142,16 +142,19 @@ flowchart TD
     run[Run principal de training]
     linear[Sub-run: Linear Regression]
     forest[Sub-run: Random Forest]
-    otros[Sub-runs: otros modelos]
+    boosting[Sub-run: Gradient Boosting]
+    svm[Sub-run: Support Vector Machine]
     metricas[Metricas y artefactos]
     champion[Modelo ganador\nalias: champion]
 
     run --> linear
     run --> forest
-    run --> otros
+    run --> boosting
+    run --> svm
     linear --> metricas
     forest --> metricas
-    otros --> metricas
+    boosting --> metricas
+    svm --> metricas
     metricas --> champion
 ```
 
@@ -165,6 +168,8 @@ El DAG `etl_process` se ejecuta automaticamente cada 15 dias, de acuerdo con
 la frecuencia de actualizacion de la fuente de datos. El DAG `training` se
 dispara automaticamente cuando finaliza correctamente `etl_process`. Ambos
 DAGs tambien pueden ejecutarse manualmente a pedido de un usuario.
+El DAG `training` no tiene una frecuencia propia: se ejecuta mediante el
+disparo del DAG de ETL o manualmente.
 
 ### DAG `etl_process`
 
@@ -180,6 +185,7 @@ flowchart TD
     split[Separar datos en train y test]
     preprocesamiento[Preprocesar datos\nencoding, scaling y balanceo]
     almacenamiento[Almacenar datasets preparados]
+    disparo[Disparar DAG training]
     fin([ETL finalizado])
 
     inicio --> descarga
@@ -187,7 +193,8 @@ flowchart TD
     limpieza --> split
     split --> preprocesamiento
     preprocesamiento --> almacenamiento
-    almacenamiento --> fin
+    almacenamiento --> disparo
+    disparo --> fin
 ```
 
 Las etapas del DAG son:
@@ -201,40 +208,55 @@ Las etapas del DAG son:
    las necesidades del problema.
 5. **Almacenamiento:** guarda los conjuntos resultantes para su consumo por el
    DAG de entrenamiento.
+6. **Disparo:** ejecuta el DAG `training` cuando el almacenamiento finaliza
+   correctamente. Esta etapa utiliza `TriggerDagRunOperator`.
 
 ### DAG `training`
 
-Este DAG toma los datos preparados por `etl_process`, entrena y evalua varios
-tipos de modelos, y registra en MLflow el modelo que obtiene las mejores
-metricas.
+Este DAG toma los datos preparados por `etl_process`, inicia un run principal
+de MLflow y ejecuta en paralelo cuatro tareas de entrenamiento. Cada tarea
+representa una familia de modelos, lee conceptualmente los datos de train y
+test, y se registra como un sub-run del run principal.
 
 ```mermaid
 flowchart TD
     inicio([Inicio de training])
-    lectura[Leer datos de entrenamiento almacenados]
-    modelos[Definir familias de modelos]
-    entrenamiento[Entrenar cada modelo\ncon busqueda y optimizacion de hiperparametros]
-    evaluacion[Evaluar cada modelo con datos de prueba]
-    comparacion[Comparar metricas de todos los modelos]
+    run[Iniciar run principal de MLflow]
+    linear[Leer datos y entrenar\nLinear Regression]
+    forest[Leer datos y entrenar\nRandom Forest]
+    boosting[Leer datos y entrenar\nGradient Boosting]
+    svm[Leer datos y entrenar\nSupport Vector Machine]
+    comparacion[Compilar resultados y comparar metricas]
     seleccion[Seleccionar el modelo ganador]
     registro[Registrar el champion en MLflow\ncon tags y alias]
     fin([Training finalizado])
 
-    inicio --> lectura
-    lectura --> modelos
-    modelos --> entrenamiento
-    entrenamiento --> evaluacion
-    evaluacion --> comparacion
+    inicio --> run
+    run --> linear
+    run --> forest
+    run --> boosting
+    run --> svm
+    linear --> comparacion
+    forest --> comparacion
+    boosting --> comparacion
+    svm --> comparacion
     comparacion --> seleccion
     seleccion --> registro
     registro --> fin
 ```
 
 El entrenamiento de cada familia de modelos se registra dentro de su propio
-sub-run de MLflow. El run principal contiene la ejecucion completa y permite
-relacionar la lectura de datos, los experimentos, la evaluacion y la decision
-final. Una vez seleccionado el mejor resultado, el DAG registra esa version en
-MLflow, agrega sus tags descriptivos y actualiza el alias `champion`.
+sub-run de MLflow. Las cuatro tareas se ejecutan en paralelo y sus resultados
+convergen en una tarea de compilacion. Esta tarea selecciona el mejor resultado
+y lo compara con las metricas del modelo que actualmente tiene el alias
+`champion`. Si el nuevo resultado es superior, el DAG registra la nueva version
+en MLflow, agrega sus tags descriptivos y actualiza el alias `champion`.
+
+La implementacion actual es un esqueleto demostrativo: las tareas solo esperan
+con `sleep()` y retornan valores ficticios para mantener la cadena de
+dependencias. La lectura de datos, el entrenamiento, los sub-runs y el registro
+real en MLflow quedan indicados mediante comentarios para una implementacion
+posterior.
 
 ## Flujo de prediccion
 
