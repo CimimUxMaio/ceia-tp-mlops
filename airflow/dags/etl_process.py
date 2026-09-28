@@ -16,17 +16,27 @@ from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOpe
     tags=["etl", "dummy"],
 )
 def etl_process():
-    @task
+    @task.virtualenv(requirements=["kagglehub", "boto3"], system_site_packages=False)
     def download_data():
         """Download the latest source data."""
-        sleep(1)
-        return {"source": "external", "records": 100}
+        import kagglehub
+        import boto3
+        import os
+
+        # Download latest version
+        path = kagglehub.dataset_download("fedesoriano/stroke-prediction-dataset")
+        filename = "healthcare-dataset-stroke-data.csv"
+
+        s3 = boto3.client("s3")
+        s3.upload_file(os.path.join(path, filename), "data", os.path.join("raw", filename))
+
+        return f"s3://data/raw/{filename}"
 
     @task
     def clean_data(source_data):
         """Clean inconsistent records before preparing the dataset."""
         sleep(1)
-        return {**source_data, "cleaned": True}
+        return {"cleaned": True}
 
     @task
     def split_data(cleaned_data):
