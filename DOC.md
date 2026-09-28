@@ -165,33 +165,35 @@ mediante dos DAGs. Cada DAG puede observarse y ejecutarse desde la interfaz
 web de Airflow.
 
 El DAG `etl_process` se ejecuta automaticamente cada 15 dias, de acuerdo con
-la frecuencia de actualizacion de la fuente de datos. El DAG `training` se
-dispara automaticamente cuando finaliza correctamente `etl_process`. Ambos
-DAGs tambien pueden ejecutarse manualmente a pedido de un usuario.
+la frecuencia de actualizacion de la fuente de datos. Comienza a partir del 1
+de enero de 2026, no realiza ejecuciones historicas pendientes (`catchup`), y
+reintenta cada tarea una vez luego de un minuto si falla. El DAG `training` se
+dispara automaticamente cuando finaliza correctamente la preparacion de los
+datos. Ambos DAGs tambien pueden ejecutarse manualmente a pedido de un
+usuario.
 El DAG `training` no tiene una frecuencia propia: se ejecuta mediante el
 disparo del DAG de ETL o manualmente.
 
 ### DAG `etl_process`
 
-Este DAG transforma los datos de origen en un conjunto preparado para el
-entrenamiento y la evaluacion. El resultado se almacena en MinIO para que
-`training` pueda consumirlo de forma reproducible.
+Este DAG descarga el dataset de prediccion de stroke, lo limpia, genera
+features adicionales y produce conjuntos estratificados para entrenamiento,
+prueba y calibracion. Los resultados se almacenan en el bucket S3 `data` de
+MinIO para que `training` pueda consumirlos de forma reproducible.
 
 ```mermaid
 flowchart TD
     inicio([Inicio de etl_process])
-    descarga[Descargar datos desde una fuente externa]
-    limpieza[Limpiar datos y preparar el conjunto]
-    split[Separar datos en train y test]
-    preprocesamiento[Preprocesar datos\nencoding, scaling y balanceo]
-    almacenamiento[Almacenar datasets preparados]
+    descarga[Descargar datos desde Kaggle]
+    limpieza[Limpiar datos y crear features]
+    preprocesamiento[Separar y preprocesar datos\nencoding y scaling]
+    almacenamiento[Almacenar train, test y calibration]
     disparo[Disparar DAG training]
     fin([ETL finalizado])
 
     inicio --> descarga
     descarga --> limpieza
-    limpieza --> split
-    split --> preprocesamiento
+    limpieza --> preprocesamiento
     preprocesamiento --> almacenamiento
     almacenamiento --> disparo
     disparo --> fin
@@ -199,17 +201,28 @@ flowchart TD
 
 Las etapas del DAG son:
 
-1. **Descarga:** obtiene la version actual de los datos desde la fuente
-   externa.
-2. **Limpieza:** corrige inconsistencias y prepara los registros para las
-   siguientes etapas.
-3. **Split:** divide el conjunto en datos de entrenamiento y de prueba.
-4. **Preprocesamiento:** aplica encoding, escalado y balanceo de acuerdo con
-   las necesidades del problema.
-5. **Almacenamiento:** guarda los conjuntos resultantes para su consumo por el
-   DAG de entrenamiento.
-6. **Disparo:** ejecuta el DAG `training` cuando el almacenamiento finaliza
-   correctamente. Esta etapa utiliza `TriggerDagRunOperator`.
+1. **Descarga:** obtiene la version mas reciente del dataset
+   `fedesoriano/stroke-prediction-dataset` mediante `kagglehub` y sube el
+   archivo `healthcare-dataset-stroke-data.csv` a
+   `s3://data/raw/healthcare-dataset-stroke-data.csv`.
+2. **Limpieza:** completa los valores faltantes de `bmi` con la mediana,
+   descarta registros con `bmi` superior a 60 y elimina la columna `id`.
+   Tambien agrega las features binarias `high_glucose_level` (glucosa
+   promedio superior a 126) y `high_bmi` (BMI superior a 30). El resultado se
+   guarda en `s3://data/clean/healthcare-dataset-stroke-data.csv`.
+3. **Particionado:** separa la variable objetivo `stroke` de las features y
+   realiza dos divisiones estratificadas para obtener 70% de entrenamiento,
+   15% de prueba y 15% de calibracion.
+4. **Preprocesamiento:** codifica `ever_married` con `OrdinalEncoder`,
+   transforma `gender`, `smoking_status`, `work_type` y `Residence_type` con
+   codificacion por frecuencia, y aplica `StandardScaler` al resultado. El
+   pipeline se ajusta con entrenamiento y se aplica sin reajuste a prueba y
+   calibracion. No se realiza balanceo de clases.
+5. **Almacenamiento:** guarda cada conjunto, incluyendo la variable `stroke`,
+   en `s3://data/preprocessed/{train,test,calibration}/healthcare-dataset-stroke-data.csv`.
+6. **Disparo:** ejecuta el DAG `training` cuando el preprocesamiento finaliza
+   correctamente. Esta etapa utiliza `TriggerDagRunOperator` y no espera a que
+   termine la ejecucion de `training`.
 
 ### DAG `training`
 
