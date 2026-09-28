@@ -111,7 +111,7 @@ services:
 
   s3:
     restart: always
-    image: pgsty/minio:latest
+    image: coollabsio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: minio
     profiles:
       - mlflow
@@ -136,7 +136,7 @@ services:
       retries: 3
 
   create_s3_buckets:
-    image: pgsty/mc:latest
+    image: coollabsio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: minio_create_bucket
     profiles:
       - mlflow
