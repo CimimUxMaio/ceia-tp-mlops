@@ -30,4 +30,6 @@ stop:
 	docker compose --profile all down
 
 clean:
-	docker compose down --rmi all --volumes
+	docker compose --profile all down --rmi all --volumes --remove-orphans
+	rm -rf airflow/logs/*
+	find airflow -type d -name __pycache__ -prune -exec rm -rf {} +
