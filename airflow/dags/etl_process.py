@@ -64,17 +64,13 @@ def etl_process():
 
         return f"s3://data/{key}"
 
-    @task.virtualenv(requirements=["boto3", "pandas", "scikit-learn", "feature-engine"], system_site_packages=False)
-    def preprocess_data(cleaned_s3_path):
-        """Apply encoding, scaling, and balancing to both datasets."""
+    @task.virtualenv(requirements=["boto3", "pandas", "scikit-learn"], system_site_packages=False)
+    def split_data(cleaned_s3_path):
+        """Split the cleaned data into training, test, and calibration sets."""
         import pandas as pd
         import boto3
         import io
         from sklearn.model_selection import train_test_split
-        from sklearn.compose import ColumnTransformer
-        from sklearn.pipeline import Pipeline
-        from sklearn.preprocessing import OrdinalEncoder, StandardScaler
-        from feature_engine.encoding import CountFrequencyEncoder
 
         s3 = boto3.client("s3")
         bucket, key = cleaned_s3_path.replace("s3://", "").split("/", 1)
@@ -97,47 +93,27 @@ def etl_process():
             stratify=y_test_calib
         )
 
-        # Encoding & Scaling
-        binary_features = ["ever_married"]
-        target_features = ["gender", "smoking_status", "work_type", "Residence_type"]
+        # Save splits to S3
+        splits = {
+            "train": (X_train, y_train),
+            "test": (X_test, y_test),
+            "calibration": (X_calib, y_calib),
+        }
 
-        preprocessor = ColumnTransformer(
-            transformers=[
-                ("binary", OrdinalEncoder(), binary_features),
-                ("frequency", CountFrequencyEncoder(encoding_method="frequency"), target_features),
-            ],
-            remainder="passthrough",
-            verbose_feature_names_out=False,
-        )
-
-        pipeline = Pipeline(steps=[
-            ("encoder", preprocessor),
-            ("scaler", StandardScaler()),
-        ])
-
-        pipeline.set_output(transform="pandas")
-
-        X_train_scaled = pipeline.fit_transform(X_train)
-        X_test_scaled = pipeline.transform(X_test)
-        X_calib_scaled = pipeline.transform(X_calib)
-        
-        # Save preprocessed datasets
-        filename = "healthcare-dataset-stroke-data.csv"
-        datasets = {"train": (X_train_scaled, y_train), "test": (X_test_scaled, y_test), "calibration": (X_calib_scaled, y_calib)}
-        s3_path_list = []
-        for dataset_name, (X_set, y_set) in datasets.items():
-            df = pd.concat([X_set, y_set], axis=1)
-            key = os.path.join("preprocessed", dataset_name, filename)
+        for split_name, (X_split, y_split) in splits.items():
+            split_df = pd.concat([X_split, y_split], axis=1)
+            filename = f"healthcare-dataset-stroke-data-{split_name}.csv"
+            key = os.path.join("splits", filename)
             buf = io.StringIO()
-            df.to_csv(buf, index=False)
+            split_df.to_csv(buf, index=False)
             s3.put_object(Bucket="data", Key=key, Body=buf.getvalue())
-            s3_path_list.append(f"s3://data/{key}")
 
-        return s3_path_list
+        return {split_name: f"s3://data/{key}" for split_name in splits.keys()}
+
 
     downloaded = download_data()
     cleaned = clean_data(downloaded)
-    preprocessed = preprocess_data(cleaned)
+    splits = split_data(cleaned)
 
     trigger_training = TriggerDagRunOperator(
         task_id="trigger_training",
@@ -145,6 +121,6 @@ def etl_process():
         wait_for_completion=False,
     )
 
-    preprocessed >> trigger_training
+    splits >> trigger_training
 
 etl_process()
