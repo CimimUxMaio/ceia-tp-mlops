@@ -6,8 +6,6 @@ from airflow.decorators import dag, task
 from airflow.utils.trigger_rule import TriggerRule
 
 
-RANDOM_STATE = 42
-
 MODEL_CONFIGS = [
     {
         "task_id": "train_logistic_regression",
@@ -28,7 +26,7 @@ MODEL_CONFIGS = [
         "task_id": "train_random_forest",
         "model": "Random Forest",
         "estimator": "random_forest",
-        "params": {"class_weight": "balanced", "random_state": RANDOM_STATE, "n_jobs": -1},
+        "params": {"class_weight": "balanced", "n_jobs": -1},
         "param_grid": {
             "model__estimator__classifier__n_estimators": [100, 300, 500],
             "model__estimator__classifier__max_depth": [None, 10, 30],
@@ -39,7 +37,7 @@ MODEL_CONFIGS = [
         "task_id": "train_gradient_boosting",
         "model": "Gradient Boosting",
         "estimator": "gradient_boosting",
-        "params": {"random_state": RANDOM_STATE},
+        "params": {},
         "param_grid": {
             "model__estimator__classifier__n_estimators": [100, 300, 500],
             "model__estimator__classifier__learning_rate": [0.01, 0.1, 0.3],
@@ -56,7 +54,7 @@ MODEL_CONFIGS = [
     catchup=False,
     max_active_runs=1,
     default_args={"retries": 1, "retry_delay": timedelta(minutes=1)},
-    tags=["training", "mlflow", "dummy"],
+    tags=["training"],
 )
 def training():
     @task.virtualenv(requirements=["boto3", "scikit-learn", "feature-engine"], system_site_packages=False)
@@ -105,8 +103,9 @@ def training():
 
     @task
     def start_mlflow_run():
-        """Start the parent MLflow run for this training execution."""
+        """Start the parent MLflow run and generate its training seed."""
         import os
+        import random
 
         import mlflow
 
@@ -117,9 +116,13 @@ def training():
         run = client.create_run(
             experiment_id=experiment.experiment_id,
         )
+        random_seed = random.SystemRandom().randint(0, 2**32 - 1)
+        client.log_param(run.info.run_id, "random_seed", random_seed)
+
         return {
             "run_id": run.info.run_id,
             "experiment_id": experiment.experiment_id,
+            "random_seed": random_seed,
         }
 
     @task.virtualenv(
@@ -134,7 +137,7 @@ def training():
         ],
         system_site_packages=False,
     )
-    def train_model(training_context, preprocessor_path, config, random_state):
+    def train_model(training_context, preprocessor_path, config):
         """Read train/test data, grid search a model, and evaluate the best one."""
         import io
         import os
@@ -178,6 +181,7 @@ def training():
         tracking_uri = os.environ["MLFLOW_TRACKING_URI"]
         mlflow.set_tracking_uri(tracking_uri)
         client = mlflow.MlflowClient()
+        random_seed = training_context["random_seed"]
         child_run = client.create_run(
             experiment_id=training_context["experiment_id"],
             tags={
@@ -195,7 +199,9 @@ def training():
                 "random_forest": RandomForestClassifier,
                 "gradient_boosting": GradientBoostingClassifier,
             }
-            estimator = estimator_classes[config["estimator"]](**config["params"])
+            estimator_params = config["params"].copy()
+            estimator_params["random_state"] = random_seed
+            estimator = estimator_classes[config["estimator"]](**estimator_params)
 
             # Import train/test data from S3
             obj = s3.get_object(Bucket="data", Key="splits/healthcare-dataset-stroke-data-train.csv")
@@ -215,7 +221,7 @@ def training():
             # Keep preprocessing in the outer pipeline. SMOTE is fitted by the
             # inner threshold-tuning CV on each fold's training data.
             balanced_estimator = ImbPipeline(steps=[
-                ("smote", SMOTE(random_state=random_state)),
+                ("smote", SMOTE(random_state=random_seed)),
                 ("classifier", estimator),
             ])
 
@@ -267,7 +273,7 @@ def training():
 
             mlflow.sklearn.log_model(
                 sk_model=best_model,
-                # artifact_path="model",
+                artifact_path=config["estimator"],
                 serialization_format="cloudpickle",
             )
 
@@ -275,20 +281,19 @@ def training():
             "model": config["model"],
             "estimator": config["estimator"],
             "run_id": child_run.info.run_id,
-            "model_uri": f"runs:/{child_run.info.run_id}/model",
+            "model_uri": f"runs:/{child_run.info.run_id}/{config['estimator']}",
             **metrics,
         }
 
     @task
     def compile_results(model_results, parent_context):
-        """Select the best candidate by F1 and promote it to champion."""
+        """Register the run's best model only when it beats the latest version."""
         import os
 
         import mlflow
         from mlflow.exceptions import MlflowException
 
-        champion_model_name = "stroke-classifier"
-        champion_alias = "champion"
+        registered_model_name = "stroke-classifier"
 
         mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
 
@@ -296,36 +301,40 @@ def training():
 
         client = mlflow.MlflowClient()
         try:
-            client.get_registered_model(champion_model_name)
+            client.get_registered_model(registered_model_name)
         except MlflowException as error:
             if "RESOURCE_DOES_NOT_EXIST" not in str(error):
                 raise
-            client.create_registered_model(champion_model_name)
+            client.create_registered_model(registered_model_name)
 
-        model_version = client.create_model_version(
-            name=champion_model_name,
-            source=best_model["model_uri"],
-            run_id=best_model["run_id"],
-            tags={"model_type": best_model["model"]},
+        registered_versions = client.search_model_versions(
+            f"name='{registered_model_name}'"
         )
-        version = int(model_version.version)
+        latest_version = max(
+            registered_versions,
+            key=lambda model_version: int(model_version.version),
+            default=None,
+        )
 
-        try:
-            champion = client.get_model_version_by_alias(champion_model_name, champion_alias)
-        except MlflowException:
-            client.set_registered_model_alias(champion_model_name, champion_alias, version)
-            promoted = True
-        else:
-            champion_run = client.get_run(champion.run_id)
-            champion_f1 = champion_run.data.metrics.get("f1")
-            if champion_f1 is None:
+        should_register = latest_version is None
+        if latest_version is not None:
+            latest_run = client.get_run(latest_version.run_id)
+            latest_f1 = latest_run.data.metrics.get("f1")
+            if latest_f1 is None:
                 raise ValueError(
-                    f"Champion version {champion.version} has no 'f1' run metric"
+                    f"Registered version {latest_version.version} has no 'f1' run metric"
                 )
+            should_register = best_model["f1"] > latest_f1
 
-            promoted = best_model["f1"] > champion_f1
-            if promoted:
-                client.set_registered_model_alias(champion_model_name, champion_alias, version)
+        version = None
+        if should_register:
+            model_version = client.create_model_version(
+                name=registered_model_name,
+                source=best_model["model_uri"],
+                run_id=best_model["run_id"],
+                tags={"model_type": best_model["model"], "f1": format(best_model["f1"], ".4f")},
+            )
+            version = int(model_version.version)
 
         client.log_metric(parent_context["run_id"], "best_f1", best_model["f1"])
         client.set_tag(parent_context["run_id"], "selected_model", best_model["model"])
@@ -334,7 +343,7 @@ def training():
             "selected_model": best_model["model"],
             "f1": best_model["f1"],
             "version": version,
-            "promote_to_champion": promoted,
+            "registered": should_register,
         }
 
     @task(trigger_rule=TriggerRule.ALL_SUCCESS)
@@ -373,7 +382,6 @@ def training():
             parent_run,
             preprocessor_path,
             config,
-            RANDOM_STATE,
         )
         for config in MODEL_CONFIGS
     ]
