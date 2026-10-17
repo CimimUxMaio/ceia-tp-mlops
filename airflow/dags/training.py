@@ -271,7 +271,7 @@ def training():
             mlflow.log_metric("cv_f1", search.best_score_)
             mlflow.log_metrics(metrics)
 
-            mlflow.sklearn.log_model(
+            model_info = mlflow.sklearn.log_model(
                 sk_model=best_model,
                 artifact_path=config["estimator"],
                 serialization_format="cloudpickle",
@@ -281,7 +281,8 @@ def training():
             "model": config["model"],
             "estimator": config["estimator"],
             "run_id": child_run.info.run_id,
-            "model_uri": f"runs:/{child_run.info.run_id}/{config['estimator']}",
+            "model_uri": model_info.model_uri,
+            "model_id": model_info.model_id,
             **metrics,
         }
 
@@ -332,6 +333,7 @@ def training():
                 name=registered_model_name,
                 source=best_model["model_uri"],
                 run_id=best_model["run_id"],
+                model_id=best_model["model_id"],
                 tags={"model_type": best_model["model"], "f1": format(best_model["f1"], ".4f")},
             )
             version = int(model_version.version)
