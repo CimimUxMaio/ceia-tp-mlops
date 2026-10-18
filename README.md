@@ -95,6 +95,7 @@ make help
 | Airflow | `http://localhost:8080` | Ejecutar y observar los DAGs |
 | MLflow | `http://localhost:5001` | Consultar runs y modelos |
 | MinIO Console | `http://localhost:9001` | Inspeccionar buckets y objetos |
+| Frontend | `http://localhost:8800/` | Predecir desde un formulario web |
 | FastAPI | `http://localhost:8800` | Consultar la API |
 | Swagger UI | `http://localhost:8800/docs` | Probar los endpoints |
 
@@ -105,18 +106,22 @@ hayan cambiado en `.env`.
 
 1. Ejecutar `make start`.
 2. Abrir Airflow en `http://localhost:8080`.
-3. Ejecutar manualmente el DAG `etl_process`.
-4. Verificar que sus tareas se ejecuten en este orden:
+3. Despausar los DAGs `etl_process` y `training`. Los DAGs se crean pausados;
+   si `training` queda pausado, la ejecucion que dispara el ETL queda en cola
+   y no se ejecuta. Al despausar `etl_process` tambien se activa su schedule
+   de 15 dias.
+4. Ejecutar manualmente el DAG `etl_process`.
+5. Verificar que sus tareas se ejecuten en este orden:
    `download_data` -> `clean_data` -> `split_data` -> `trigger_training`.
-5. Verificar que `trigger_training` inicie el DAG `training`.
-6. Observar en `training` la creacion del preprocesador, el run padre de
+6. Verificar que `trigger_training` inicie el DAG `training`.
+7. Observar en `training` la creacion del preprocesador, el run padre de
    MLflow, los entrenamientos y la compilacion de resultados.
-7. Consultar MinIO, MLflow y FastAPI para verificar los artefactos y resultados.
+8. Consultar MinIO, MLflow y FastAPI para verificar los artefactos y resultados.
 
-El ETL guarda en el bucket `data` los datos raw y clean, los splits de train,
-test y calibration, y `pipelines/preprocessor.pkl`. El entrenamiento registra
-sus runs y artefactos en MLflow y publica las versiones bajo el modelo
-`stroke-classifier` cuando corresponde.
+El ETL guarda en el bucket `data` los datos raw y clean, y los splits de
+train, test y calibration. El DAG `training` guarda en el mismo bucket
+`pipelines/preprocessor.pkl`, registra sus runs y artefactos en MLflow y
+publica las versiones bajo el modelo `stroke-classifier` cuando corresponde.
 
 ## Verificaciones rapidas
 
@@ -163,3 +168,5 @@ make clean
 ```
 
 Usar `make clean` solo cuando se quiera reiniciar completamente el ambiente.
+En Windows, este target requiere un shell POSIX (por ejemplo Git Bash o WSL),
+ya que utiliza `rm` y `find`.

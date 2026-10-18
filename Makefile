@@ -23,6 +23,7 @@ urls:
 	@echo "Apache Airflow: http://localhost:$(AIRFLOW_PORT)"
 	@echo "MLflow:         http://localhost:$(MLFLOW_PORT)"
 	@echo "MinIO console:  http://localhost:$(MINIO_PORT_UI)"
+	@echo "Frontend:       http://localhost:$(FASTAPI_PORT)/"
 	@echo "FastAPI:        http://localhost:$(FASTAPI_PORT)"
 	@echo "FastAPI docs:   http://localhost:$(FASTAPI_PORT)/docs"
 

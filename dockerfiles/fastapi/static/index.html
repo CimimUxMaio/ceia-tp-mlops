@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Prediccion de ACV</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 20px auto; padding: 0 16px; }
+    label { display: block; margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <h1>Prediccion de ACV</h1>
+  <p>Estado de la API: <span id="health">...</span></p>
+
+  <form id="form">
+    <label>Version
+      <select id="version"><option value="latest">Ultima</option></select>
+    </label>
+    <label>Genero
+      <select name="gender"><option>Male</option><option>Female</option><option>Other</option></select>
+    </label>
+    <label>Edad <input name="age" type="number" step="any" required></label>
+    <label>Hipertension
+      <select name="hypertension"><option value="0">No</option><option value="1">Si</option></select>
+    </label>
+    <label>Enfermedad cardiaca
+      <select name="heart_disease"><option value="0">No</option><option value="1">Si</option></select>
+    </label>
+    <label>Casado alguna vez
+      <select name="ever_married"><option>Yes</option><option>No</option></select>
+    </label>
+    <label>Tipo de trabajo
+      <select name="work_type">
+        <option>Private</option><option>Self-employed</option><option>Govt_job</option>
+        <option>children</option><option>Never_worked</option>
+      </select>
+    </label>
+    <label>Residencia
+      <select name="Residence_type"><option>Urban</option><option>Rural</option></select>
+    </label>
+    <label>Glucosa promedio <input name="avg_glucose_level" type="number" step="any" required></label>
+    <label>BMI <input name="bmi" type="number" step="any" required></label>
+    <label>Tabaquismo
+      <select name="smoking_status">
+        <option>never smoked</option><option>formerly smoked</option>
+        <option>smokes</option><option>Unknown</option>
+      </select>
+    </label>
+    <button type="submit">Predecir</button>
+  </form>
+
+  <h2>Resultado</h2>
+  <pre id="result">-</pre>
+
+  <script>
+    fetch("/health").then(r => r.json())
+      .then(d => document.getElementById("health").textContent = d.status)
+      .catch(() => document.getElementById("health").textContent = "sin respuesta");
+
+    fetch("/versions/").then(r => r.json()).then(versions => {
+      for (const v of versions) {
+        const label = `v${v.version} - ${v.tags.model_type || ""} (F1 ${v.tags.f1 || "-"})`;
+        document.getElementById("version").add(new Option(label, v.version));
+      }
+    });
+
+    document.getElementById("form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      for (const field of ["age", "avg_glucose_level", "bmi", "hypertension", "heart_disease"]) {
+        data[field] = Number(data[field]);
+      }
+      const version = document.getElementById("version").value;
+      const url = version === "latest" ? "/latest/" : `/versions/${version}/`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const body = await response.json();
+      document.getElementById("result").textContent = response.ok
+        ? `Version: ${body.version}\nPrediccion: ${body.prediction === 1 ? "riesgo de ACV" : "sin riesgo"}\nProbabilidad: ${(body.probability * 100).toFixed(2)}%`
+        : `Error ${response.status}: ${JSON.stringify(body.detail)}`;
+    });
+  </script>
+</body>
+</html>

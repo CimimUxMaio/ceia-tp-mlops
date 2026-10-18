@@ -4,10 +4,12 @@ from enum import Enum
 import mlflow
 import pandas as pd
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from mlflow.exceptions import MlflowException
 from pydantic import BaseModel
 
 MODEL_NAME = "stroke-classifier"
+INDEX_PATH = os.path.join(os.path.dirname(__file__), "static", "index.html")
 
 mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
 
@@ -95,6 +97,12 @@ def _predict(version: str, features: PatientFeatures):
         "prediction": int(prediction),
         "probability": float(probability),
     }
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    """Serve the web frontend."""
+    return FileResponse(INDEX_PATH)
 
 
 @app.get("/health")

@@ -61,6 +61,7 @@ Con la configuracion del archivo `.env`, las interfaces se encuentran en:
 | Airflow | `http://localhost:8080` |
 | MLflow | `http://localhost:5001` |
 | MinIO Console | `http://localhost:9001` |
+| Frontend | `http://localhost:8800/` |
 | FastAPI | `http://localhost:8800` |
 | Swagger UI | `http://localhost:8800/docs` |
 
@@ -84,6 +85,7 @@ de FastAPI.
 
 | Metodo | Endpoint | Descripcion |
 | --- | --- | --- |
+| `GET` | `/` | Sirve el frontend HTML (`static/index.html`) para consultar versiones y predecir desde un formulario. No figura en Swagger. |
 | `GET` | `/health` | Indica que el proceso de la API esta disponible. Lo usa el healthcheck de Docker Compose. |
 | `GET` | `/versions/` | Lista las versiones registradas, sus runs, estado, fecha de creacion y tags. |
 | `POST` | `/latest/` | Predice con la version numericamente mas alta de `stroke-classifier`. |
@@ -185,6 +187,22 @@ curl -X POST "http://localhost:8800/versions/3/" \
 
 La documentacion interactiva completa esta disponible en
 `http://localhost:8800/docs`.
+
+### Frontend
+
+FastAPI sirve en `http://localhost:8800/` una pagina HTML simple,
+`dockerfiles/fastapi/static/index.html`, que consume la misma API:
+
+- **Estado:** al cargar consulta `/health` y muestra si la API responde.
+- **Selector de version:** se completa con `/versions/` e incluye la opcion
+  "Ultima" y cada version registrada con su tipo de modelo y F1.
+- **Formulario:** contiene los diez campos del esquema de entrada, con
+  listas desplegables para los valores categoricos e indicadores.
+- **Resultado:** envia el formulario a `POST /latest/` o a
+  `POST /versions/{version}/` y muestra la version utilizada, la prediccion y
+  la probabilidad, o el error devuelto por la API.
+
+Como la pagina y la API comparten origen, no se requiere configurar CORS.
 
 ## MLflow
 
