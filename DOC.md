@@ -2,308 +2,410 @@
 
 ## Descripcion general
 
-La plataforma implementa un flujo completo para preparar datos, entrenar y
-registrar modelos de machine learning, y exponer el modelo seleccionado para
-realizar predicciones. El sistema esta compuesto por una API REST desarrollada
-con FastAPI, MLflow como plataforma de experimentacion y gestion del ciclo de
-vida de modelos, y Apache Airflow como orquestador de los procesos de datos y
-entrenamiento.
+La plataforma implementa un flujo completo para descargar y preparar datos,
+entrenar modelos de clasificacion, registrar los resultados en MLflow y servir
+predicciones mediante una API REST. El sistema esta compuesto por:
 
-Los servicios se ejecutan como una arquitectura distribuida. MinIO proporciona
-el almacenamiento de objetos para datos y artefactos, PostgreSQL almacena la
-informacion persistente de MLflow y Airflow, y Valkey funciona como soporte de
-mensajeria para la ejecucion distribuida de Airflow.
+- Apache Airflow para orquestar el ETL y el entrenamiento.
+- MLflow para registrar experimentos, metricas, artefactos y versiones de
+  modelos.
+- FastAPI para exponer predicciones y consultar las versiones registradas.
+- MinIO como almacenamiento de objetos compatible con S3.
+- PostgreSQL para los metadatos persistentes de Airflow y MLflow.
+- Valkey como broker de mensajes de Airflow con `CeleryExecutor`.
+
+La configuracion de Docker Compose esta orientada al desarrollo local y no es
+una configuracion de produccion.
 
 ## Arquitectura
-
-El siguiente diagrama muestra los componentes principales y sus relaciones,
-sin detallar la implementacion interna de cada servicio.
 
 ```mermaid
 flowchart LR
     usuario[Usuario o cliente]
-    fuente[Fuente externa de datos]
-    api[FastAPI\nAPI REST de predicciones]
+    fuente[Dataset de Kaggle]
+    api[FastAPI\nAPI REST]
     mlflow[MLflow\nTracking y Model Registry]
-    airflow[Apache Airflow\nOrquestacion de procesos]
-    minio[MinIO\nAlmacenamiento de objetos]
-    postgres[(PostgreSQL\nMetadatos y persistencia)]
-    valkey[(Valkey\nMensajeria de Airflow)]
+    airflow[Apache Airflow\nETL y training]
+    minio[MinIO\nBuckets data y mlflow]
+    postgres[(PostgreSQL\nMetadatos)]
+    valkey[(Valkey\nBroker Celery)]
 
-    usuario -->|Predicciones| api
-    usuario -->|Gestion y ejecucion manual| airflow
-    usuario -->|Experimentos, modelos y metricas| mlflow
-    fuente -->|Datos de origen| airflow
-    airflow -->|Ejecucion de ETL y training| minio
-    airflow -->|Registro de runs y modelos| mlflow
-    api -->|Carga del modelo y consulta del champion| mlflow
+    usuario -->|Predicciones y versiones| api
+    usuario -->|UI y ejecuciones manuales| airflow
+    usuario -->|Experimentos y modelos| mlflow
+    fuente -->|Descarga| airflow
+    airflow -->|Datasets y preprocessor.pkl| minio
+    airflow -->|Runs y registro de modelos| mlflow
+    api -->|Consulta y carga de versiones| mlflow
     mlflow -->|Artefactos| minio
     mlflow -->|Metadatos| postgres
     airflow -->|Metadatos| postgres
     airflow <--> |Tareas distribuidas| valkey
 ```
 
-### Interfaces de usuario
+### Servicios e interfaces
 
-- **FastAPI** expone una API REST y su documentacion interactiva mediante
-  Swagger UI.
-- **MLflow** proporciona una interfaz web para consultar experimentos, runs,
-  metricas, artefactos y versiones registradas.
-- **Airflow** proporciona una interfaz web para observar DAGs, revisar sus
-  ejecuciones, consultar logs y lanzar procesos manualmente.
-- **MinIO** proporciona una interfaz web para inspeccionar los buckets de
-  datos y artefactos.
+- **FastAPI:** API REST, documentacion OpenAPI y Swagger UI en `/docs`.
+- **MLflow:** interfaz web para experimentos, runs, metricas, artefactos y
+  versiones registradas.
+- **Airflow:** interfaz web para observar DAGs, logs y ejecuciones manuales.
+- **MinIO:** interfaz web para inspeccionar buckets y objetos.
+- **PostgreSQL:** metadatos de Airflow y MLflow, en las bases `airflow` y
+  `mlflow_db`.
+- **Valkey:** broker interno para las tareas distribuidas de Airflow.
+
+Con la configuracion del archivo `.env`, las interfaces se encuentran en:
+
+| Servicio | URL |
+| --- | --- |
+| Airflow | `http://localhost:8080` |
+| MLflow | `http://localhost:5001` |
+| MinIO Console | `http://localhost:9001` |
+| FastAPI | `http://localhost:8800` |
+| Swagger UI | `http://localhost:8800/docs` |
+
+El puerto interno de MLflow es `5000`; el archivo `.env` lo publica como
+`5001` en el host. Los puertos pueden modificarse mediante las variables de
+entorno correspondientes.
 
 ## FastAPI
 
-FastAPI es la puerta de entrada para consumir los modelos registrados en
-MLflow. La API recibe un conjunto de features en formato JSON, resuelve el
-modelo solicitado y devuelve la prediccion generada.
+FastAPI sirve el modelo registrado con el nombre `stroke-classifier`. Al
+recibir un paciente, construye un `DataFrame`, agrega las features derivadas
+`high_glucose_level` y `high_bmi`, carga la version solicitada desde MLflow y
+ejecuta la pipeline completa del modelo. La pipeline registrada contiene el
+preprocesamiento y el clasificador.
 
-La API publica los siguientes endpoints:
+Los modelos se almacenan en memoria por version despues de su primera carga.
+Esto evita volver a descargar el mismo artefacto en cada solicitud del proceso
+de FastAPI.
+
+### Endpoints
 
 | Metodo | Endpoint | Descripcion |
 | --- | --- | --- |
-| `GET` | `/models` | Retorna el listado de modelos disponibles. |
-| `POST` | `/models/champion/predict` | Predice utilizando el modelo que actualmente tiene el alias `champion`. |
-| `POST` | `/models/{id}/predict` | Predice utilizando el modelo identificado por `{id}` en MLflow. |
+| `GET` | `/health` | Indica que el proceso de la API esta disponible. Lo usa el healthcheck de Docker Compose. |
+| `GET` | `/versions/` | Lista las versiones registradas, sus runs, estado, fecha de creacion y tags. |
+| `POST` | `/latest/` | Predice con la version numericamente mas alta de `stroke-classifier`. |
+| `POST` | `/versions/{version}/` | Predice con una version especifica del modelo. |
 
-El identificador `champion` es un caso especial. En cada solicitud, la API
-consulta el modelo que ocupa ese alias en MLflow, por lo que la prediccion usa
-el modelo con mejor resultado seleccionado por el proceso de entrenamiento.
-El endpoint parametrizado permite solicitar de forma explicita otro modelo
-registrado.
+El endpoint `latest` obtiene todas las versiones registradas y selecciona la
+de mayor numero. Si no existen versiones, o si la version solicitada no
+existe, la API responde con HTTP 404.
 
-Para consultar el listado de modelos disponibles se utiliza el endpoint `GET`:
+### Esquema de entrada
+
+Los endpoints de prediccion reciben directamente un objeto JSON con los
+siguientes campos:
+
+| Campo | Tipo | Valores o descripcion |
+| --- | --- | --- |
+| `gender` | string | `Male`, `Female`, `Other` |
+| `age` | float | Edad |
+| `hypertension` | int | Indicador 0/1 |
+| `heart_disease` | int | Indicador 0/1 |
+| `ever_married` | string | `Yes`, `No` |
+| `work_type` | string | `children`, `Govt_job`, `Never_worked`, `Private`, `Self-employed` |
+| `Residence_type` | string | `Urban`, `Rural` |
+| `avg_glucose_level` | float | Nivel promedio de glucosa |
+| `bmi` | float | Indice de masa corporal |
+| `smoking_status` | string | `formerly smoked`, `never smoked`, `smokes`, `Unknown` |
+
+La API calcula las features derivadas de la misma forma que el ETL:
+
+- `high_glucose_level` vale `1` cuando `avg_glucose_level > 126`.
+- `high_bmi` vale `1` cuando `bmi > 30`.
+
+Ejemplo de estado de la API:
 
 ```bash
-curl -X GET "http://localhost:8800/models"
+curl -X GET "http://localhost:8800/health"
 ```
 
-La estructura exacta del JSON depende de los features utilizados por el modelo
-activo. Por ejemplo, una solicitud conceptual para el modelo champion es:
+Respuesta:
+
+```json
+{"status":"ok"}
+```
+
+Ejemplo de listado de versiones:
 
 ```bash
-curl -X POST "http://localhost:8800/models/champion/predict" \
+curl -X GET "http://localhost:8800/versions/"
+```
+
+Ejemplo de prediccion con la ultima version registrada:
+
+```bash
+curl -X POST "http://localhost:8800/latest/" \
   -H "Content-Type: application/json" \
   -d '{
-    "features": {
-      "feature_1": 10.5,
-      "feature_2": 3,
-      "feature_3": "valor"
-    }
+    "gender": "Female",
+    "age": 67.0,
+    "hypertension": 0,
+    "heart_disease": 1,
+    "ever_married": "Yes",
+    "work_type": "Private",
+    "Residence_type": "Urban",
+    "avg_glucose_level": 228.69,
+    "bmi": 36.6,
+    "smoking_status": "formerly smoked"
   }'
 ```
 
-Para consultar un modelo especifico se utiliza su identificador en la ruta:
+Respuesta de prediccion:
+
+```json
+{
+  "version": "3",
+  "prediction": 0,
+  "probability": 0.0842
+}
+```
+
+Para solicitar una version concreta se reemplaza `latest` por el numero de
+version:
 
 ```bash
-curl -X POST "http://localhost:8800/models/modelo-ejemplo/predict" \
+curl -X POST "http://localhost:8800/versions/3/" \
   -H "Content-Type: application/json" \
   -d '{
-    "features": {
-      "feature_1": 10.5,
-      "feature_2": 3,
-      "feature_3": "valor"
-    }
+    "gender": "Female",
+    "age": 67.0,
+    "hypertension": 0,
+    "heart_disease": 1,
+    "ever_married": "Yes",
+    "work_type": "Private",
+    "Residence_type": "Urban",
+    "avg_glucose_level": 228.69,
+    "bmi": 36.6,
+    "smoking_status": "formerly smoked"
   }'
 ```
 
-La documentacion interactiva de FastAPI esta disponible en
-`http://localhost:8800/docs` y permite inspeccionar los contratos de la API y
-probar las solicitudes desde el navegador.
+La documentacion interactiva completa esta disponible en
+`http://localhost:8800/docs`.
 
 ## MLflow
 
-MLflow centraliza el seguimiento de experimentos y la gestion de los modelos.
-Sus responsabilidades dentro del sistema son:
+MLflow centraliza el seguimiento del experimento `stroke-training`, el
+almacenamiento de artefactos y el registro del modelo. Todas las versiones se
+registran bajo un unico nombre:
 
-- Registrar los entrenamientos, parametros, metricas y artefactos producidos.
-- Organizar cada ejecucion dentro de un experimento.
-- Mantener el registro de los modelos y sus versiones.
-- Identificar el modelo seleccionado como `champion` mediante alias y tags.
-- Proporcionar a FastAPI el modelo que debe utilizar para generar
-  predicciones.
+```text
+stroke-classifier
+```
 
-Los artefactos de los experimentos y modelos se almacenan en MinIO, mientras
-que la informacion de seguimiento y registro se persiste en PostgreSQL. MLflow
-tambien ofrece una interfaz web para explorar la evolucion de las metricas,
-comparar ejecuciones y consultar el modelo champion.
+En cada ejecucion, `compile_results` selecciona el candidato con mayor F1
+sobre el conjunto de prueba y lo compara con el F1 de la version numericamente
+mas alta ya registrada. Se registra una nueva version solamente cuando:
 
-### Estructura de los runs de entrenamiento
+- no existe ninguna version anterior; o
+- el F1 del candidato es estrictamente mayor que el F1 de la ultima version.
 
-Cada ejecucion del DAG `training` se registra como un run principal de MLflow.
-Dentro de ese run se crea un sub-run para cada familia de modelos evaluada.
-Esta estructura permite comparar modelos y sus busquedas de hiperparametros
-manteniendo todo el proceso de entrenamiento agrupado.
+Cuando el candidato no supera la version actual, la ejecucion queda registrada
+en MLflow, pero no crea una nueva version del modelo.
+
+Las versiones registradas reciben estos tags:
+
+| Tag | Contenido |
+| --- | --- |
+| `model_type` | Familia del modelo seleccionada |
+| `f1` | F1 del modelo, formateado con cuatro decimales |
+
+### Runs de entrenamiento
+
+Cada ejecucion de `training` crea un run padre y un run hijo por cada familia
+de modelo:
 
 ```mermaid
 flowchart TD
-    run[Run principal de training]
-    linear[Sub-run: Linear Regression]
-    forest[Sub-run: Random Forest]
-    boosting[Sub-run: Gradient Boosting]
-    svm[Sub-run: Support Vector Machine]
-    metricas[Metricas y artefactos]
-    champion[Modelo ganador\nalias: champion]
+    padre[Run padre\nexperimento stroke-training]
+    lr[Run hijo\nLogistic Regression]
+    rf[Run hijo\nRandom Forest]
+    gb[Run hijo\nGradient Boosting]
+    modelos[Modelos sklearn serializados]
+    registro[Registro stroke-classifier\nversion nueva si mejora F1]
 
-    run --> linear
-    run --> forest
-    run --> boosting
-    run --> svm
-    linear --> metricas
-    forest --> metricas
-    boosting --> metricas
-    svm --> metricas
-    metricas --> champion
+    padre --> lr
+    padre --> rf
+    padre --> gb
+    lr --> modelos
+    rf --> modelos
+    gb --> modelos
+    modelos --> registro
 ```
 
-## Airflow y orquestacion de procesos
+El run padre registra:
 
-Apache Airflow coordina las tareas de preparacion de datos y entrenamiento
-mediante dos DAGs. Cada DAG puede observarse y ejecutarse desde la interfaz
-web de Airflow.
+- El parametro `random_seed`, generado aleatoriamente para cada ejecucion.
+- La metrica `best_f1` del mejor candidato.
+- El tag `selected_model` con la familia seleccionada.
+- El estado final `FINISHED` o `FAILED`.
 
-El DAG `etl_process` se ejecuta automaticamente cada 15 dias, de acuerdo con
-la frecuencia de actualizacion de la fuente de datos. Comienza a partir del 1
-de enero de 2026, no realiza ejecuciones historicas pendientes (`catchup`), y
-reintenta cada tarea una vez luego de un minuto si falla. El DAG `training` se
-dispara automaticamente cuando finaliza correctamente la preparacion de los
-datos. Ambos DAGs tambien pueden ejecutarse manualmente a pedido de un
-usuario.
-El DAG `training` no tiene una frecuencia propia: se ejecuta mediante el
-disparo del DAG de ETL o manualmente.
+Cada run hijo registra:
+
+| Categoria | Datos |
+| --- | --- |
+| Tags | `mlflow.runName`, `mlflow.parentRunId`, `model_type` |
+| Parametros | Parametros configurados del estimador, nombre del estimador y parametros `best_*` de la busqueda |
+| Metricas | `cv_f1`, `f1`, `recall`, `precision`, `balanced_accuracy`, `roc_auc`, `threshold` |
+| Artefactos | Mejor modelo sklearn, serializado con CloudPickle bajo el path del estimador |
+
+El modelo registrado conserva la referencia al run hijo de origen, su URI de
+artefacto y su `model_id` de MLflow.
+
+## Airflow y orquestacion
+
+Airflow ejecuta dos DAGs:
+
+- `etl_process`: se ejecuta cada 15 dias a partir del 1 de enero de 2026.
+- `training`: no tiene schedule propio; se ejecuta cuando lo dispara ETL o
+  manualmente.
 
 ### DAG `etl_process`
 
-Este DAG descarga el dataset de prediccion de stroke, lo limpia, genera
-features adicionales y produce conjuntos estratificados para entrenamiento,
-prueba y calibracion. Los resultados se almacenan en el bucket S3 `data` de
-MinIO para que `training` pueda consumirlos de forma reproducible.
+El DAG descarga el dataset de stroke, lo limpia, genera features y crea
+los splits de entrenamiento y evaluacion.
 
 ```mermaid
 flowchart TD
     inicio([Inicio de etl_process])
-    descarga[Descargar datos desde Kaggle]
-    limpieza[Limpiar datos y crear features]
-    preprocesamiento[Separar y preprocesar datos\nencoding y scaling]
-    almacenamiento[Almacenar train, test y calibration]
-    disparo[Disparar DAG training]
-    fin([ETL finalizado])
+    descarga[download_data\nDescargar desde Kaggle]
+    limpieza[clean_data\nLimpiar y crear features]
+    particion[split_data\nCrear train, test y calibration]
+    disparo[trigger_training\nDisparar training sin esperar]
+    fin([Fin del DAG ETL])
 
     inicio --> descarga
     descarga --> limpieza
-    limpieza --> preprocesamiento
-    preprocesamiento --> almacenamiento
-    almacenamiento --> disparo
+    limpieza --> particion
+    particion --> disparo
     disparo --> fin
 ```
 
-Las etapas del DAG son:
+Las tareas realizan lo siguiente:
 
-1. **Descarga:** obtiene la version mas reciente del dataset
-   `fedesoriano/stroke-prediction-dataset` mediante `kagglehub` y sube el
-   archivo `healthcare-dataset-stroke-data.csv` a
+1. **Descarga:** obtiene la version mas reciente de
+   `fedesoriano/stroke-prediction-dataset` mediante `kagglehub` y guarda
+   `healthcare-dataset-stroke-data.csv` en
    `s3://data/raw/healthcare-dataset-stroke-data.csv`.
 2. **Limpieza:** completa los valores faltantes de `bmi` con la mediana,
-   descarta registros con `bmi` superior a 60 y elimina la columna `id`.
-   Tambien agrega las features binarias `high_glucose_level` (glucosa
-   promedio superior a 126) y `high_bmi` (BMI superior a 30). El resultado se
-   guarda en `s3://data/clean/healthcare-dataset-stroke-data.csv`.
-3. **Particionado:** separa la variable objetivo `stroke` de las features y
-   realiza dos divisiones estratificadas para obtener 70% de entrenamiento,
-   15% de prueba y 15% de calibracion.
-4. **Preprocesamiento:** codifica `ever_married` con `OrdinalEncoder`,
-   transforma `gender`, `smoking_status`, `work_type` y `Residence_type` con
-   codificacion por frecuencia, y aplica `StandardScaler` al resultado. El
-   pipeline se ajusta con entrenamiento y se aplica sin reajuste a prueba y
-   calibracion. No se realiza balanceo de clases.
-5. **Almacenamiento:** guarda cada conjunto, incluyendo la variable `stroke`,
-   en `s3://data/preprocessed/{train,test,calibration}/healthcare-dataset-stroke-data.csv`.
-6. **Disparo:** ejecuta el DAG `training` cuando el preprocesamiento finaliza
-   correctamente. Esta etapa utiliza `TriggerDagRunOperator` y no espera a que
-   termine la ejecucion de `training`.
+   descarta filas con `bmi > 60`, elimina `id` y crea `high_glucose_level` y
+   `high_bmi`. Guarda el resultado en
+   `s3://data/clean/healthcare-dataset-stroke-data.csv`.
+3. **Particionado:** separa `stroke` de las features y realiza divisiones para obtener aproximadamente 70% de entrenamiento, 15% de
+   prueba y 15% de calibracion.
+4. **Almacenamiento:** guarda los CSV sin preprocesar en:
+   `s3://data/splits/healthcare-dataset-stroke-data-train.csv`,
+   `s3://data/splits/healthcare-dataset-stroke-data-test.csv` y
+   `s3://data/splits/healthcare-dataset-stroke-data-calibration.csv`.
+5. **Disparo:** `TriggerDagRunOperator` inicia `training`.
 
 ### DAG `training`
 
-Este DAG toma los datos preparados por `etl_process`, inicia un run principal
-de MLflow y ejecuta en paralelo cuatro tareas de entrenamiento. Cada tarea
-representa una familia de modelos, lee conceptualmente los datos de train y
-test, y se registra como un sub-run del run principal.
+El DAG crea en paralelo el pipeline de preprocesamiento y el run padre de
+MLflow. Luego ejecuta tres tareas de entrenamiento en paralelo. Cada tarea
+lee los mismos splits de train y test, carga el preprocesador almacenado y
+construye una pipeline completa de preprocesamiento y modelo.
 
 ```mermaid
 flowchart TD
     inicio([Inicio de training])
-    run[Iniciar run principal de MLflow]
-    linear[Leer datos y entrenar\nLinear Regression]
-    forest[Leer datos y entrenar\nRandom Forest]
-    boosting[Leer datos y entrenar\nGradient Boosting]
-    svm[Leer datos y entrenar\nSupport Vector Machine]
-    comparacion[Compilar resultados y comparar metricas]
-    seleccion[Seleccionar el modelo ganador]
-    registro[Registrar el champion en MLflow\ncon tags y alias]
-    fin([Training finalizado])
+    preprocessor[create_preprocessor\nGuardar preprocessor.pkl]
+    parent[start_mlflow_run\nCrear run padre y seed]
+    lr[train_logistic_regression]
+    rf[train_random_forest]
+    gb[train_gradient_boosting]
+    compile[compile_results\nSeleccionar por F1 y registrar]
+    success[finalize_parent_success\nMarcar FINISHED]
+    failure[finalize_parent_failure\nMarcar FAILED]
+    fin([Fin del DAG])
 
-    inicio --> run
-    run --> linear
-    run --> forest
-    run --> boosting
-    run --> svm
-    linear --> comparacion
-    forest --> comparacion
-    boosting --> comparacion
-    svm --> comparacion
-    comparacion --> seleccion
-    seleccion --> registro
-    registro --> fin
+    inicio --> preprocessor
+    inicio --> parent
+    preprocessor --> lr
+    preprocessor --> rf
+    preprocessor --> gb
+    parent --> lr
+    parent --> rf
+    parent --> gb
+    lr --> compile
+    rf --> compile
+    gb --> compile
+    compile --> success
+    success --> fin
+    preprocessor --> failure
+    lr --> failure
+    rf --> failure
+    gb --> failure
+    compile --> failure
+    failure --> fin
 ```
 
-El entrenamiento de cada familia de modelos se registra dentro de su propio
-sub-run de MLflow. Las cuatro tareas se ejecutan en paralelo y sus resultados
-convergen en una tarea de compilacion. Esta tarea selecciona el mejor resultado
-y lo compara con las metricas del modelo que actualmente tiene el alias
-`champion`. Si el nuevo resultado es superior, el DAG registra la nueva version
-en MLflow, agrega sus tags descriptivos y actualiza el alias `champion`.
+Las familias evaluadas son:
 
-La implementacion actual es un esqueleto demostrativo: las tareas solo esperan
-con `sleep()` y retornan valores ficticios para mantener la cadena de
-dependencias. La lectura de datos, el entrenamiento, los sub-runs y el registro
-real en MLflow quedan indicados mediante comentarios para una implementacion
-posterior.
+- Logistic Regression, con busqueda de `C` en escala logaritmica.
+- Random Forest, con busqueda de cantidad de arboles, profundidad y cantidad
+  de features.
+- Gradient Boosting, con busqueda de cantidad de estimadores, learning rate y
+  profundidad.
+
+Cada entrenamiento utiliza:
+
+- `GridSearchCV` de cinco folds con scoring F1.
+- `SMOTE` dentro de la pipeline balanceada.
+- `TunedThresholdClassifierCV` de tres folds, con scoring F1 y 100 umbrales.
+- Evaluacion sobre el conjunto de prueba con F1, recall, precision, balanced
+  accuracy y ROC AUC.
+
+El umbral aprendido se utiliza al llamar `predict()` y tambien se registra como
+la metrica `threshold`.
+
+### Pipeline de preprocesamiento
+
+El preprocesamiento no es una tarea del ETL ni se guarda como conjuntos de
+datos transformados. `create_preprocessor` construye una pipeline y la guarda
+como un objeto joblib en:
+
+```text
+s3://data/pipelines/preprocessor.pkl
+```
+
+La pipeline contiene:
+
+- `OrdinalEncoder` para `ever_married`.
+- `CountFrequencyEncoder` para `gender`, `smoking_status`, `work_type` y
+  `Residence_type`.
+- Passthrough para las columnas restantes.
+- `StandardScaler` para el resultado.
+
+Cada tarea `train_model` carga ese objeto, lo incluye en la pipeline externa
+del modelo y lo ajusta junto con la busqueda de hiperparametros. El modelo
+serializado y registrado contiene, por lo tanto, el preprocesamiento ajustado,
+SMOTE, el clasificador y el ajuste de umbral. En inferencia se pueden enviar
+las features con sus valores originales y la pipeline interna realiza las
+transformaciones necesarias.
 
 ## Flujo de prediccion
-
-El flujo de inferencia separa al consumidor de los detalles internos de
-entrenamiento y registro:
 
 ```mermaid
 sequenceDiagram
     participant C as Cliente
     participant F as FastAPI
-    participant M as MLflow
-    participant A as Modelo champion
+    participant R as MLflow Registry
+    participant M as Pipeline registrada
 
-    C->>F: POST /models/champion/predict con features JSON
-    F->>M: Solicitar modelo asociado al alias champion
-    M-->>F: Entregar modelo seleccionado
-    F->>A: Ejecutar prediccion con los features
-    A-->>F: Devolver resultado
-    F-->>C: Respuesta JSON con la prediccion
+    C->>F: POST /latest/ con PatientFeatures
+    F->>F: Crear high_glucose_level y high_bmi
+    F->>R: Listar versiones de stroke-classifier
+    R-->>F: Devolver versiones registradas
+    F->>R: Cargar models:/stroke-classifier/{version}
+    R-->>F: Devolver pipeline sklearn
+    F->>M: Ejecutar predict y predict_proba
+    M-->>F: Devolver prediccion y probabilidad
+    F-->>C: Respuesta JSON con version y resultado
 ```
 
-De esta forma, el cliente siempre utiliza un contrato REST estable, mientras
-que la version concreta del modelo puede cambiar cuando una nueva ejecucion de
-`training` actualiza el alias `champion`.
-
-## Persistencia y almacenamiento
-
-- **MinIO:** conserva los datasets preparados, los artefactos de MLflow y los
-  archivos asociados a los modelos.
-- **PostgreSQL:** conserva los metadatos de experimentos y modelos de MLflow,
-  junto con la informacion persistente de Airflow.
-- **Valkey:** soporta la comunicacion necesaria para distribuir las tareas de
-  Airflow entre sus componentes de ejecucion.
-
-Estos servicios complementan a FastAPI, MLflow y Airflow, pero no exponen el
-contrato funcional principal del sistema. La interaccion de usuarios se realiza
-principalmente mediante la API REST y las interfaces web de los servicios.
+Para una version fija, el cliente utiliza `/versions/{version}/` y se omite la
+seleccion de la version mas alta.

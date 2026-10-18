@@ -36,6 +36,7 @@ def etl_process():
         import pandas as pd
         import boto3
         import io
+        import os
 
         s3 = boto3.client("s3")
 
@@ -70,6 +71,7 @@ def etl_process():
         import pandas as pd
         import boto3
         import io
+        import os
         from sklearn.model_selection import train_test_split
 
         s3 = boto3.client("s3")

@@ -97,6 +97,12 @@ def _predict(version: str, features: PatientFeatures):
     }
 
 
+@app.get("/health")
+def health_check():
+    """Report that the API process is available."""
+    return {"status": "ok"}
+
+
 
 
 @app.get("/versions/")
@@ -115,7 +121,7 @@ def list_versions():
     ]
 
 
-@app.post("/latest/predict/")
+@app.post("/latest/")
 def predict_latest(features: PatientFeatures):
     """Predict using the most recently registered model version."""
     return _predict(_get_latest_version(), features)
