@@ -2,86 +2,394 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Prediccion de ACV</title>
-  <style>
-    body { font-family: sans-serif; max-width: 600px; margin: 20px auto; padding: 0 16px; }
-    label { display: block; margin: 6px 0; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Predicción de ACV</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 </head>
-<body>
-  <h1>Prediccion de ACV</h1>
-  <p>Estado de la API: <span id="health">...</span></p>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+  <div class="flex min-h-screen flex-col lg:flex-row">
 
-  <form id="form">
-    <label>Version
-      <select id="version"><option value="latest">Ultima</option></select>
-    </label>
-    <label>Genero
-      <select name="gender"><option>Male</option><option>Female</option><option>Other</option></select>
-    </label>
-    <label>Edad <input name="age" type="number" step="any" required></label>
-    <label>Hipertension
-      <select name="hypertension"><option value="0">No</option><option value="1">Si</option></select>
-    </label>
-    <label>Enfermedad cardiaca
-      <select name="heart_disease"><option value="0">No</option><option value="1">Si</option></select>
-    </label>
-    <label>Casado alguna vez
-      <select name="ever_married"><option>Yes</option><option>No</option></select>
-    </label>
-    <label>Tipo de trabajo
-      <select name="work_type">
-        <option>Private</option><option>Self-employed</option><option>Govt_job</option>
-        <option>children</option><option>Never_worked</option>
-      </select>
-    </label>
-    <label>Residencia
-      <select name="Residence_type"><option>Urban</option><option>Rural</option></select>
-    </label>
-    <label>Glucosa promedio <input name="avg_glucose_level" type="number" step="any" required></label>
-    <label>BMI <input name="bmi" type="number" step="any" required></label>
-    <label>Tabaquismo
-      <select name="smoking_status">
-        <option>never smoked</option><option>formerly smoked</option>
-        <option>smokes</option><option>Unknown</option>
-      </select>
-    </label>
-    <button type="submit">Predecir</button>
-  </form>
+    <!-- Sidebar: versiones -->
+    <aside class="flex w-full shrink-0 flex-col border-b border-slate-800 bg-slate-900 lg:w-72 lg:border-b-0 lg:border-r">
+      <div class="flex items-center gap-3 border-b border-slate-800 px-5 py-4">
+        <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500 text-sm font-bold text-white">ACV</div>
+        <div>
+          <h1 class="text-sm font-semibold leading-tight">Predicción de ACV</h1>
+          <div id="health" class="mt-0.5">
+            <span class="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
+              <span class="h-1.5 w-1.5 rounded-full bg-slate-600"></span>Consultando…
+            </span>
+          </div>
+        </div>
+      </div>
 
-  <h2>Resultado</h2>
-  <pre id="result">-</pre>
+      <div class="flex-1 overflow-y-auto px-3 py-4">
+        <p class="px-2 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Modelo activo</p>
+        <div id="versionList" class="space-y-1"></div>
+      </div>
+      <p class="px-5 py-4 text-xs text-slate-600">El historial se guarda en tu navegador.</p>
+    </aside>
+
+    <!-- Principal -->
+    <main class="flex-1 px-4 py-6 lg:px-8">
+      <div class="mx-auto max-w-2xl space-y-6">
+        <div id="result" class="hidden"></div>
+
+        <section class="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-lg">
+          <h2 class="mb-5 text-base font-semibold">Datos del paciente</h2>
+          <form id="form" class="space-y-6">
+            <fieldset>
+              <legend class="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Perfil</legend>
+              <div class="space-y-4">
+                <div>
+                  <span class="mb-2 block text-sm font-medium text-slate-300">Género</span>
+                  <div class="flex flex-wrap gap-2">
+                    <label class="cursor-pointer">
+                      <input type="radio" name="gender" value="Male" class="peer sr-only" checked>
+                      <span class="block rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">Male</span>
+                    </label>
+                    <label class="cursor-pointer">
+                      <input type="radio" name="gender" value="Female" class="peer sr-only">
+                      <span class="block rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">Female</span>
+                    </label>
+                    <label class="cursor-pointer">
+                      <input type="radio" name="gender" value="Other" class="peer sr-only">
+                      <span class="block rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">Other</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="mb-1 flex items-center justify-between">
+                    <label for="age" class="text-sm font-medium text-slate-300">Edad</label>
+                    <output id="ageOut" class="text-sm font-semibold text-indigo-400">50</output>
+                  </div>
+                  <input type="range" id="age" min="0" max="100" step="1" value="50" class="w-full accent-indigo-500">
+                </div>
+
+                <label class="flex cursor-pointer items-center justify-between gap-3">
+                  <span class="text-sm font-medium text-slate-300">Casado alguna vez</span>
+                  <input type="checkbox" id="everMarried" class="peer sr-only" checked>
+                  <span class="relative h-6 w-11 shrink-0 rounded-full bg-slate-700 transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-sm after:transition-transform after:content-[''] peer-checked:bg-indigo-500 peer-checked:after:translate-x-5"></span>
+                </label>
+
+                <div>
+                  <span class="mb-2 block text-sm font-medium text-slate-300">Residencia</span>
+                  <div class="grid grid-cols-2 gap-2">
+                    <label class="cursor-pointer">
+                      <input type="radio" name="Residence_type" value="Urban" class="peer sr-only" checked>
+                      <span class="block rounded-lg border border-slate-700 px-3 py-1.5 text-center text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">Urban</span>
+                    </label>
+                    <label class="cursor-pointer">
+                      <input type="radio" name="Residence_type" value="Rural" class="peer sr-only">
+                      <span class="block rounded-lg border border-slate-700 px-3 py-1.5 text-center text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">Rural</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend class="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Salud</legend>
+              <div class="space-y-4">
+                <label class="flex cursor-pointer items-center justify-between gap-3">
+                  <span class="text-sm font-medium text-slate-300">Hipertensión</span>
+                  <input type="checkbox" id="hypertension" class="peer sr-only">
+                  <span class="relative h-6 w-11 shrink-0 rounded-full bg-slate-700 transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-sm after:transition-transform after:content-[''] peer-checked:bg-indigo-500 peer-checked:after:translate-x-5"></span>
+                </label>
+
+                <label class="flex cursor-pointer items-center justify-between gap-3">
+                  <span class="text-sm font-medium text-slate-300">Enfermedad cardíaca</span>
+                  <input type="checkbox" id="heartDisease" class="peer sr-only">
+                  <span class="relative h-6 w-11 shrink-0 rounded-full bg-slate-700 transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-sm after:transition-transform after:content-[''] peer-checked:bg-indigo-500 peer-checked:after:translate-x-5"></span>
+                </label>
+
+                <div>
+                  <div class="mb-1 flex items-center justify-between">
+                    <label for="avgGlucose" class="text-sm font-medium text-slate-300">Glucosa promedio</label>
+                    <output id="glucoseOut" class="text-sm font-semibold text-indigo-400">100</output>
+                  </div>
+                  <input type="range" id="avgGlucose" min="50" max="300" step="1" value="100" class="w-full accent-indigo-500">
+                </div>
+
+                <div>
+                  <div class="mb-1 flex items-center justify-between">
+                    <label for="bmi" class="text-sm font-medium text-slate-300">BMI</label>
+                    <output id="bmiOut" class="text-sm font-semibold text-indigo-400">25</output>
+                  </div>
+                  <input type="range" id="bmi" min="10" max="60" step="0.1" value="25" class="w-full accent-indigo-500">
+                </div>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend class="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Estilo de vida</legend>
+              <div class="space-y-4">
+                <div>
+                  <span class="mb-2 block text-sm font-medium text-slate-300">Tipo de trabajo</span>
+                  <div class="flex flex-wrap gap-2">
+                    <label class="cursor-pointer">
+                      <input type="radio" name="work_type" value="Private" class="peer sr-only" checked>
+                      <span class="block rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">Private</span>
+                    </label>
+                    <label class="cursor-pointer">
+                      <input type="radio" name="work_type" value="Self-employed" class="peer sr-only">
+                      <span class="block rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">Self-employed</span>
+                    </label>
+                    <label class="cursor-pointer">
+                      <input type="radio" name="work_type" value="Govt_job" class="peer sr-only">
+                      <span class="block rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">Govt_job</span>
+                    </label>
+                    <label class="cursor-pointer">
+                      <input type="radio" name="work_type" value="children" class="peer sr-only">
+                      <span class="block rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">children</span>
+                    </label>
+                    <label class="cursor-pointer">
+                      <input type="radio" name="work_type" value="Never_worked" class="peer sr-only">
+                      <span class="block rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">Never_worked</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <span class="mb-2 block text-sm font-medium text-slate-300">Tabaquismo</span>
+                  <div class="flex flex-wrap gap-2">
+                    <label class="cursor-pointer">
+                      <input type="radio" name="smoking_status" value="never smoked" class="peer sr-only" checked>
+                      <span class="block rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">never smoked</span>
+                    </label>
+                    <label class="cursor-pointer">
+                      <input type="radio" name="smoking_status" value="formerly smoked" class="peer sr-only">
+                      <span class="block rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">formerly smoked</span>
+                    </label>
+                    <label class="cursor-pointer">
+                      <input type="radio" name="smoking_status" value="smokes" class="peer sr-only">
+                      <span class="block rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">smokes</span>
+                    </label>
+                    <label class="cursor-pointer">
+                      <input type="radio" name="smoking_status" value="Unknown" class="peer sr-only">
+                      <span class="block rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500 peer-checked:border-indigo-500 peer-checked:bg-indigo-500 peer-checked:text-white">Unknown</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </fieldset>
+
+            <button type="submit" class="w-full rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:opacity-60">
+              Predecir
+            </button>
+          </form>
+        </section>
+      </div>
+    </main>
+
+    <!-- Panel historial -->
+    <aside class="flex w-full shrink-0 flex-col border-t border-slate-800 bg-slate-900 lg:w-80 lg:border-l lg:border-t-0">
+      <div class="flex items-center justify-between border-b border-slate-800 px-5 py-4">
+        <h2 class="text-sm font-semibold">Historial</h2>
+        <button id="clearHistory" class="rounded-md px-2 py-1 text-xs font-medium text-slate-400 hover:bg-slate-800 hover:text-slate-200 disabled:opacity-40" disabled>Limpiar</button>
+      </div>
+      <div class="flex-1 overflow-y-auto px-4 py-4">
+        <p id="historyEmpty" class="text-sm text-slate-500">Sin predicciones todavía.</p>
+        <ul id="history" class="space-y-3"></ul>
+      </div>
+    </aside>
+  </div>
 
   <script>
-    fetch("/health").then(r => r.json())
-      .then(d => document.getElementById("health").textContent = d.status)
-      .catch(() => document.getElementById("health").textContent = "sin respuesta");
+    const API_BASE = new URLSearchParams(location.search).get("api") || "";
+    const HISTORY_KEY = "stroke-prediction-history";
+    const $ = (id) => document.getElementById(id);
 
-    fetch("/versions/").then(r => r.json()).then(versions => {
-      for (const v of versions) {
-        const label = `v${v.version} - ${v.tags.model_type || ""} (F1 ${v.tags.f1 || "-"})`;
-        document.getElementById("version").add(new Option(label, v.version));
-      }
-    });
+    let selectedVersion = "latest";
 
-    document.getElementById("form").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.target));
-      for (const field of ["age", "avg_glucose_level", "bmi", "hypertension", "heart_disease"]) {
-        data[field] = Number(data[field]);
-      }
-      const version = document.getElementById("version").value;
-      const url = version === "latest" ? "/latest/" : `/versions/${version}/`;
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+    function loadHistory() {
+      try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
+      catch { return []; }
+    }
+    function saveHistory(list) { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); }
+
+    function setHealth(ok) {
+      $("health").innerHTML = ok
+        ? `<span class="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400"><span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>API en línea</span>`
+        : `<span class="inline-flex items-center gap-1.5 text-xs font-medium text-red-400"><span class="h-1.5 w-1.5 rounded-full bg-red-500"></span>API sin respuesta</span>`;
+    }
+
+    function radioValue(name) {
+      const el = document.querySelector(`input[name="${name}"]:checked`);
+      return el ? el.value : "";
+    }
+
+    function renderVersions(versions) {
+      const items = [{ version: "latest", tags: { model_type: "Última registrada" } }, ...versions];
+      $("versionList").innerHTML = items.map((v) => {
+        const f1 = v.tags && v.tags.f1 != null ? `F1 ${v.tags.f1}` : "";
+        return `
+          <button type="button" data-version="${v.version}"
+            class="version-item flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition hover:bg-slate-800">
+            <span class="font-medium">v${v.version}</span>
+            <span class="text-xs text-slate-500">${f1}</span>
+          </button>`;
+      }).join("");
+      $("versionList").querySelectorAll(".version-item").forEach((btn) => {
+        btn.addEventListener("click", () => selectVersion(btn.dataset.version));
       });
-      const body = await response.json();
-      document.getElementById("result").textContent = response.ok
-        ? `Version: ${body.version}\nPrediccion: ${body.prediction === 1 ? "riesgo de ACV" : "sin riesgo"}\nProbabilidad: ${(body.probability * 100).toFixed(2)}%`
-        : `Error ${response.status}: ${JSON.stringify(body.detail)}`;
+      selectVersion("latest");
+    }
+
+    function selectVersion(version) {
+      selectedVersion = version;
+      $("versionList").querySelectorAll(".version-item").forEach((b) => {
+        const active = b.dataset.version === version;
+        b.className = "version-item flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition " +
+          (active ? "bg-indigo-500/20 text-white ring-1 ring-indigo-500" : "text-slate-300 hover:bg-slate-800");
+      });
+    }
+
+    const LEVELS = ["muy baja", "baja", "media", "alta", "muy alta"];
+    function probabilityLabel(p) {
+      const filled = Math.max(1, Math.min(5, Math.round(p * 5)));
+      return LEVELS[filled - 1];
+    }
+
+    function segments(p, risk) {
+      const filled = Math.max(1, Math.round(p * 5));
+      const on = risk ? "bg-red-400" : "bg-emerald-400";
+      return Array.from({ length: 5 }, (_, i) =>
+        `<span class="inline-block h-1.5 w-7 rounded-full ${i < filled ? on : "bg-slate-700"}"></span>`
+      ).join("");
+    }
+
+    function renderResult(body) {
+      const risk = body.prediction === 1;
+      const label = probabilityLabel(body.probability);
+      $("result").className = "rounded-2xl border p-6 " + (risk ? "border-red-900 bg-red-500/10" : "border-emerald-900 bg-emerald-500/10");
+      $("result").innerHTML = `
+        <div class="mb-1 text-xs font-medium uppercase tracking-widest text-slate-400">Resultado · v${body.version}</div>
+        <div class="text-2xl font-bold ${risk ? "text-red-300" : "text-emerald-300"}">${risk ? "Riesgo de ACV" : "Sin riesgo"}</div>
+        <div class="mt-2 text-sm text-slate-400">Probabilidad: <span class="font-semibold text-slate-200">${label}</span></div>
+        <div class="mt-3 flex items-center gap-1.5">${segments(body.probability, risk)}</div>`;
+      $("result").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    function summary(p) {
+      return `${p.gender}, ${p.age} años, ${p.work_type}`;
+    }
+
+    function renderHistory() {
+      currentHistory = loadHistory();
+      $("clearHistory").disabled = currentHistory.length === 0;
+      $("historyEmpty").classList.toggle("hidden", currentHistory.length > 0);
+      $("history").innerHTML = currentHistory.map((e, i) => {
+        const risk = e.prediction === 1;
+        return `
+          <li data-index="${i}" class="cursor-pointer rounded-lg border border-slate-800 p-3 transition hover:border-slate-700 hover:bg-slate-800/60">
+            <div class="mb-2 flex items-center justify-between">
+              <span class="text-xs text-slate-500">${new Date(e.ts).toLocaleString()}</span>
+              <span class="text-xs font-medium text-slate-400">v${e.version}</span>
+            </div>
+            <p class="mb-2 text-sm text-slate-300">${summary(e.params)}</p>
+            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${risk ? "bg-red-500/20 text-red-300" : "bg-emerald-500/20 text-emerald-300"}">
+              ${risk ? "Riesgo" : "Sin riesgo"}
+            </span>
+          </li>`;
+      }).join("");
+    }
+
+    let currentHistory = [];
+
+    function setRadio(name, value) {
+      document.querySelectorAll(`input[name="${name}"]`).forEach((r) => { r.checked = r.value === value; });
+    }
+    function setSlider(inputId, outId, value) {
+      $(inputId).value = value;
+      $(outId).textContent = value;
+    }
+    function loadEntry(entry) {
+      setRadio("gender", entry.params.gender);
+      setRadio("work_type", entry.params.work_type);
+      setRadio("Residence_type", entry.params.Residence_type);
+      setRadio("smoking_status", entry.params.smoking_status);
+      setSlider("age", "ageOut", entry.params.age);
+      setSlider("avgGlucose", "glucoseOut", entry.params.avg_glucose_level);
+      setSlider("bmi", "bmiOut", entry.params.bmi);
+      $("hypertension").checked = entry.params.hypertension === 1;
+      $("heartDisease").checked = entry.params.heart_disease === 1;
+      $("everMarried").checked = entry.params.ever_married === "Yes";
+      selectVersion(String(entry.version));
+      renderResult({ version: entry.version, prediction: entry.prediction, probability: entry.probability });
+    }
+    $("history").addEventListener("click", (ev) => {
+      const item = ev.target.closest("li[data-index]");
+      if (!item) return;
+      loadEntry(currentHistory[Number(item.dataset.index)]);
     });
+
+    async function loadVersions() {
+      try {
+        const res = await fetch(`${API_BASE}/versions/`);
+        renderVersions(await res.json());
+      } catch {
+        renderVersions([]);
+      }
+    }
+
+    $("form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = e.target.querySelector("button[type=submit]");
+      const data = {
+        gender: radioValue("gender"),
+        age: Number($("age").value),
+        hypertension: $("hypertension").checked ? 1 : 0,
+        heart_disease: $("heartDisease").checked ? 1 : 0,
+        ever_married: $("everMarried").checked ? "Yes" : "No",
+        work_type: radioValue("work_type"),
+        Residence_type: radioValue("Residence_type"),
+        avg_glucose_level: Number($("avgGlucose").value),
+        bmi: Number($("bmi").value),
+        smoking_status: radioValue("smoking_status"),
+      };
+      const url = selectedVersion === "latest" ? `${API_BASE}/latest/` : `${API_BASE}/versions/${selectedVersion}/`;
+      btn.disabled = true;
+      btn.textContent = "Prediciendo…";
+      try {
+        const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+        const body = await res.json();
+        if (res.ok) {
+          renderResult(body);
+          const list = loadHistory();
+          list.unshift({ ts: Date.now(), version: body.version, params: data, prediction: body.prediction, probability: body.probability });
+          saveHistory(list.slice(0, 50));
+          renderHistory();
+        } else {
+          $("result").className = "rounded-2xl border border-red-900 bg-red-500/10 p-6";
+          $("result").innerHTML = `<p class="text-sm text-red-300">Error ${res.status}: ${JSON.stringify(body.detail || body)}</p>`;
+        }
+      } catch {
+        $("result").className = "rounded-2xl border border-red-900 bg-red-500/10 p-6";
+        $("result").innerHTML = `<p class="text-sm text-red-300">No se pudo conectar con la API.</p>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Predecir";
+      }
+    });
+
+    $("clearHistory").addEventListener("click", () => {
+      localStorage.removeItem(HISTORY_KEY);
+      renderHistory();
+    });
+
+    function bindSlider(inputId, outId) {
+      const input = $(inputId), out = $(outId);
+      input.addEventListener("input", () => { out.textContent = input.value; });
+    }
+    bindSlider("age", "ageOut");
+    bindSlider("avgGlucose", "glucoseOut");
+    bindSlider("bmi", "bmiOut");
+
+    fetch(`${API_BASE}/health`).then((r) => r.json()).then(() => setHealth(true)).catch(() => setHealth(false));
+    loadVersions();
+    renderHistory();
   </script>
 </body>
 </html>
